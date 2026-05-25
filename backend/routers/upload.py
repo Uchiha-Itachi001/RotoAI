@@ -118,3 +118,19 @@ async def upload_video(
         "width": info["width"],
         "height": info["height"],
     }
+
+
+@router.get("/session/{session_id}")
+async def get_session(session_id: str):
+    """
+    Retrieve session metadata (e.g. frame count, fps, dimensions).
+    """
+    from services.session_service import load_session_meta, get_session_path
+    
+    session_path = get_session_path(session_id)
+    if not os.path.exists(session_path):
+        raise HTTPException(status_code=404, detail="Session not found.")
+        
+    meta = load_session_meta(session_id)
+    return meta
+

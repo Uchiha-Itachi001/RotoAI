@@ -149,6 +149,13 @@ export const api = {
   },
 
   /**
+   * Get session metadata.
+   */
+  getSession: async (session_id) => {
+    return request(`${getBase()}/session/${session_id}`)
+  },
+
+  /**
    * Get active AI model status.
    */
   getModelStatus: async () => {

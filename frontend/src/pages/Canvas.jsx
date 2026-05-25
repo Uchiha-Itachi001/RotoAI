@@ -25,6 +25,17 @@ export default function Canvas() {
   const [currentFrame, setCurrentFrame] = useState(0)
   const [totalFrames, setTotalFrames] = useState(sessionData?.total_frames || 120)
   const [fps, setFps] = useState(sessionData?.fps || 24)
+  const [videoWidth, setVideoWidth] = useState(sessionData?.width || 1920)
+  const [videoHeight, setVideoHeight] = useState(sessionData?.height || 1080)
+  const [originalFilename, setOriginalFilename] = useState(sessionData?.original_filename || "Video Clip")
+
+  // Auto-follow toggle state + ref for websocket thread safety
+  const [autoFollow, _setAutoFollow] = useState(true)
+  const autoFollowRef = useRef(true)
+  const setAutoFollow = (val) => {
+    _setAutoFollow(val)
+    autoFollowRef.current = val
+  }
 
   // Modes and styles
   const [activeToolMode, setActiveToolMode] = useState("add") // add | subtract | paintAdd | paintSubtract
@@ -78,8 +89,20 @@ export default function Canvas() {
     return () => clearInterval(interval)
   }, [fetchModelStatus])
 
-  const originalW = sessionData?.width  || 1920
-  const originalH = sessionData?.height || 1080
+  // Fetch session details on mount to restore state if location state is missing
+  useEffect(() => {
+    api.getSession(sessionId)
+      .then(data => {
+        if (data.total_frames) setTotalFrames(data.total_frames)
+        if (data.fps) setFps(data.fps)
+        if (data.width) setVideoWidth(data.width)
+        if (data.height) setVideoHeight(data.height)
+        if (data.original_filename) setOriginalFilename(data.original_filename)
+      })
+      .catch(err => {
+        console.error("Error loading session metadata:", err)
+      })
+  }, [sessionId])
 
   // ── Load Frame & Mask ──────────────────────────────────────────────────────
   const loadFrame = useCallback(async (fIdx) => {
@@ -93,9 +116,7 @@ export default function Canvas() {
   }, [sessionId])
 
   useEffect(() => {
-    if (currentFrame !== 0) {
-      loadFrame(currentFrame)
-    }
+    loadFrame(currentFrame)
   }, [currentFrame, loadFrame])
 
   // ── Preview mask triggers ──────────────────────────────────────────────────
@@ -276,6 +297,7 @@ export default function Canvas() {
 
   // ── Frame Navigation ───────────────────────────────────────────────────────
   const stepFrame = (offset) => {
+    setAutoFollow(false)
     const nextFrame = Math.max(0, Math.min(totalFrames - 1, currentFrame + offset))
     setCurrentFrame(nextFrame)
   }
@@ -285,6 +307,8 @@ export default function Canvas() {
     if (tracking) return
     setError(null)
     setTracking(true)
+    // Keep auto-follow enabled when clicking track
+    setAutoFollow(true)
     setTrackingProgress({ frame: currentFrame, total: totalFrames, speed: 0 })
 
     const base = getApiUrl()
@@ -318,9 +342,11 @@ export default function Canvas() {
             speed: parseFloat(speed.toFixed(1))
           })
 
-          // Update frame view in real time
-          setCurrentFrame(data.frame)
-          loadFrame(data.frame)
+          // Update frame view in real time if auto-follow is active
+          if (autoFollowRef.current) {
+            setCurrentFrame(data.frame)
+            loadFrame(data.frame)
+          }
         } else if (data.status === 'done') {
           setTracking(false)
           ws.close()
@@ -441,7 +467,7 @@ export default function Canvas() {
         <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)' }} />
 
         <span style={{ fontSize: 12, color: '#6b6b8a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}>
-          {sessionData?.original_filename || "Video Clip"}
+          {originalFilename}
         </span>
 
         <BackendStatus />
@@ -728,57 +754,55 @@ export default function Canvas() {
               </div>
             )}
 
-            {/* Drag tracking progress box overlay */}
+            {/* Non-blocking Floating tracking progress box overlay */}
             {tracking && (
               <div style={{
-                position: 'absolute', inset: 0, zIndex: 20,
-                background: 'rgba(7, 7, 10, 0.75)', backdropFilter: 'blur(6px)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 20,
+                background: 'rgba(17, 17, 24, 0.9)', backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(108, 99, 255, 0.25)', borderRadius: 12,
+                padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 16,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.6)', color: '#fff', fontSize: 12
               }}>
-                <div className="card-surface animate-fade-in" style={{
-                  width: '100%', maxWidth: 420, padding: 32, borderRadius: 16,
-                  border: '1px solid rgba(108, 99, 255, 0.15)', background: '#111119',
-                  boxShadow: '0 10px 30px rgba(0,0,0,0.7)', textAlign: 'center'
-                }}>
-                  <div style={{ position: 'relative', width: 64, height: 64, margin: '0 auto 16px' }}>
-                    <svg className="animate-spin" width="64" height="64" viewBox="0 0 64 64" fill="none">
-                      <circle cx="32" cy="32" r="28" stroke="rgba(255,255,255,0.05)" strokeWidth="3"/>
-                      <path d="M32 4 A28 28 0 0 1 60 32" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round"/>
-                    </svg>
-                    <div style={{
-                      position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontFamily: 'monospace', fontWeight: 'bold', fontSize: 13, color: '#a78bfa'
-                    }}>
-                      {Math.round((trackingProgress.frame / (trackingProgress.total - 1)) * 100)}%
-                    </div>
-                  </div>
-
-                  <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Tracking Subject</h3>
-                  <p style={{ fontSize: 12, color: '#6b6b8a', marginBottom: 20 }}>
-                    Processing frame {trackingProgress.frame + 1} / {trackingProgress.total} at {trackingProgress.speed} fps
-                  </p>
-
-                  <div style={{ width: '100%', background: 'rgba(255,255,255,0.05)', height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 24 }}>
-                    <div style={{
-                      width: `${(trackingProgress.frame / (trackingProgress.total - 1)) * 100}%`,
-                      background: 'linear-gradient(90deg, #8b5cf6, #6c63ff)', height: '100%', borderRadius: 3,
-                      transition: 'width 0.1s ease-out'
-                    }} />
-                  </div>
-
-                  <button
-                    onClick={cancelTracking}
-                    style={{
-                      width: '100%', padding: '10px 0', border: '1px solid rgba(220, 38, 38, 0.4)',
-                      background: 'rgba(220, 38, 38, 0.1)', color: '#ef4444', borderRadius: 8,
-                      fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s'
-                    }}
-                    onMouseEnter={(e) => { e.target.style.background = 'rgba(220,38,38,0.25)' }}
-                    onMouseLeave={(e) => { e.target.style.background = 'rgba(220,38,38,0.1)' }}
-                  >
-                    Cancel Tracking
-                  </button>
+                <div style={{ position: 'relative', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg className="animate-spin" width="28" height="28" viewBox="0 0 28 28" fill="none">
+                    <circle cx="14" cy="14" r="12" stroke="rgba(255,255,255,0.05)" strokeWidth="2"/>
+                    <path d="M14 2 A12 12 0 0 1 26 14" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <span style={{ position: 'absolute', fontSize: 9, fontWeight: 'bold', fontFamily: 'monospace' }}>
+                    {Math.round((trackingProgress.frame / (trackingProgress.total - 1)) * 100)}%
+                  </span>
                 </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontWeight: 600 }}>Tracking Subject...</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    Frame {trackingProgress.frame + 1} / {trackingProgress.total} ({trackingProgress.speed} fps)
+                  </span>
+                </div>
+                
+                {/* Auto-Follow Toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', userSelect: 'none', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={autoFollow}
+                    onChange={(e) => setAutoFollow(e.target.checked)}
+                    style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+                  />
+                  <span>Auto-Follow</span>
+                </label>
+
+                <button
+                  onClick={cancelTracking}
+                  style={{
+                    padding: '4px 10px', background: 'rgba(220, 38, 38, 0.15)', border: '1px solid rgba(220, 38, 38, 0.3)',
+                    color: '#ef4444', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                    transition: 'all 0.15s'
+                  }}
+                  onMouseEnter={(e) => { e.target.style.background = 'rgba(220,38,38,0.25)' }}
+                  onMouseLeave={(e) => { e.target.style.background = 'rgba(220,38,38,0.15)' }}
+                >
+                  Cancel
+                </button>
               </div>
             )}
 
@@ -819,8 +843,8 @@ export default function Canvas() {
               overlayB64={overlayVisible ? overlayB64 : null}
               points={currentPoints}
               onAddPoint={addPoint}
-              originalW={originalW}
-              originalH={originalH}
+              originalW={videoWidth}
+              originalH={videoHeight}
               drawingBox={drawingBox}
               onBox={handleBox}
               activeToolMode={activeToolMode}
@@ -1119,10 +1143,15 @@ export default function Canvas() {
             min="0"
             max={totalFrames - 1}
             value={currentFrame}
-            onChange={(e) => setCurrentFrame(parseInt(e.target.value))}
+            onChange={(e) => {
+              setAutoFollow(false)
+              setCurrentFrame(parseInt(e.target.value))
+            }}
+            className="timeline-scrubber"
             style={{
-              width: '100%', height: 6, cursor: 'pointer', zIndex: 3,
-              accentColor: 'var(--accent)', background: 'rgba(255,255,255,0.06)'
+              width: '100%', height: 4, cursor: 'pointer', zIndex: 3,
+              outline: 'none', borderRadius: 2,
+              background: `linear-gradient(to right, #8b5cf6 0%, #6c63ff ${(currentFrame / (totalFrames - 1)) * 100}%, rgba(255,255,255,0.06) ${(currentFrame / (totalFrames - 1)) * 100}%, rgba(255,255,255,0.06) 100%)`
             }}
           />
         </div>
