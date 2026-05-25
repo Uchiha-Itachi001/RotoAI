@@ -49,13 +49,23 @@ export const api = {
    * @param {File} file
    * @returns {{ session_id, first_frame_b64, total_frames, fps, width, height }}
    */
-  upload: async (file, startTime = 0.0, endTime = -1.0, fps = -1.0) => {
+  upload: async (file, startTime = 0.0, endTime = -1.0, fps = -1.0, session_id = null) => {
     const form = new FormData()
     form.append('file', file)
     form.append('start_time', startTime)
     form.append('end_time', endTime)
     form.append('fps', fps)
+    if (session_id) {
+      form.append('session_id', session_id)
+    }
     return request(`${getBase()}/upload`, { method: 'POST', body: form })
+  },
+
+  /**
+   * Get video upload & frame extraction progress.
+   */
+  getUploadProgress: async (session_id) => {
+    return request(`${getBase()}/session/${session_id}/progress`)
   },
 
   /**

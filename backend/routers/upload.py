@@ -10,6 +10,8 @@ from services.ffmpeg_service import extract_frames, get_video_info
 import aiofiles
 import os
 import base64
+import json
+from typing import Optional
 
 router = APIRouter()
 
@@ -25,12 +27,21 @@ ALLOWED_TYPES = {
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", 500))
 
 
+def save_progress(session_id: str, data: dict):
+    """Write progress data to progress.json in the session folder."""
+    session_path = get_session_path(session_id)
+    progress_path = os.path.join(session_path, "progress.json")
+    with open(progress_path, "w") as f:
+        json.dump(data, f)
+
+
 @router.post("/upload")
 async def upload_video(
     file: UploadFile = File(...),
     start_time: float = Form(0.0),
     end_time: float = Form(-1.0),
-    fps: float = Form(-1.0)
+    fps: float = Form(-1.0),
+    session_id: Optional[str] = Form(None)
 ):
     """
     Accept a video file and custom frame range / FPS settings,
@@ -59,8 +70,12 @@ async def upload_video(
         )
 
     # Create session directory structure
-    session_id = create_session()
+    if not session_id:
+        session_id = create_session()
+    
     session_path = get_session_path(session_id)
+    os.makedirs(os.path.join(session_path, "frames"), exist_ok=True)
+    os.makedirs(os.path.join(session_path, "masks"), exist_ok=True)
     video_path = os.path.join(session_path, "input.mp4")
 
     # Persist uploaded video
@@ -84,8 +99,25 @@ async def upload_video(
 
         start_frame = min(max(0, start_frame), total_video_frames - 1)
 
-        total_frames = extract_frames(video_path, frames_dir, start_frame, end_frame, fps)
+        # Estimate expected frame count to display in progress
+        if end_frame > 0:
+            expected_total = end_frame - start_frame + 1
+        else:
+            expected_total = total_video_frames - start_frame
+
+        if fps > 0 and abs(fps - original_fps) > 0.01:
+            duration = expected_total / original_fps
+            expected_total = int(duration * fps)
+
+        save_progress(session_id, {"status": "extracting", "frame": 0, "total": max(1, expected_total)})
+
+        def progress_cb(count):
+            save_progress(session_id, {"status": "extracting", "frame": count, "total": max(1, expected_total)})
+
+        total_frames = extract_frames(video_path, frames_dir, start_frame, end_frame, fps, progress_cb)
+        save_progress(session_id, {"status": "done", "frame": total_frames, "total": total_frames})
     except Exception as e:
+        save_progress(session_id, {"status": "error", "message": str(e)})
         raise HTTPException(
             status_code=422,
             detail=f"Could not process video: {str(e)}. "
@@ -133,4 +165,17 @@ async def get_session(session_id: str):
         
     meta = load_session_meta(session_id)
     return meta
+
+
+@router.get("/session/{session_id}/progress")
+async def get_session_progress(session_id: str):
+    """
+    Retrieve current frame extraction progress.
+    """
+    session_path = get_session_path(session_id)
+    progress_path = os.path.join(session_path, "progress.json")
+    if os.path.exists(progress_path):
+        with open(progress_path, "r") as f:
+            return json.load(f)
+    return {"status": "initializing", "frame": 0, "total": 100}
 

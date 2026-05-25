@@ -245,30 +245,38 @@ def predict_video(
     device_type = "cuda" if DEVICE == "cuda" else ("xpu" if DEVICE == "xpu" else "cpu")
     dtype = torch.float16 if DEVICE in ("cuda", "xpu") else torch.bfloat16
 
-    with torch.inference_mode(), torch.autocast(device_type=device_type, dtype=dtype):
-        for frame_idx, obj_ids, masks in predictor.propagate_in_video(
-            inference_state,
-            start_frame_idx=start_frame,
-            reverse=reverse_prop
-        ):
-            mask = (masks[0][0] > 0).cpu().numpy().astype(np.uint8) * 255
+    from concurrent.futures import ThreadPoolExecutor
 
-            # Apply paint strokes if any
-            strokes_data = prompts_dict.get(str(frame_idx), {}).get("strokes", [])
-            if strokes_data:
-                strokes = [Stroke(**s) for s in strokes_data]
-                mask = draw_strokes_on_mask(mask, strokes)
+    def save_mask_files(raw_path, mask_arr, finessed_path, finessed_arr):
+        Image.fromarray(mask_arr).save(raw_path, "PNG", compress_level=1)
+        Image.fromarray(finessed_arr).save(finessed_path, "PNG", compress_level=1)
 
-            # Save raw mask
-            raw_path = os.path.join(masks_dir, f"raw_{frame_idx:05d}.png")
-            Image.fromarray(mask).save(raw_path)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with torch.inference_mode(), torch.autocast(device_type=device_type, dtype=dtype):
+            for frame_idx, obj_ids, masks in predictor.propagate_in_video(
+                inference_state,
+                start_frame_idx=start_frame,
+                reverse=reverse_prop
+            ):
+                mask = (masks[0][0] > 0).cpu().numpy().astype(np.uint8) * 255
 
-            # Apply finesse and save finessed mask
-            finessed = apply_finesse(mask, finesse_dict, frame_idx, session_id)
-            Image.fromarray(finessed).save(os.path.join(masks_dir, f"{frame_idx:05d}.png"))
+                # Apply paint strokes if any
+                strokes_data = prompts_dict.get(str(frame_idx), {}).get("strokes", [])
+                if strokes_data:
+                    strokes = [Stroke(**s) for s in strokes_data]
+                    mask = draw_strokes_on_mask(mask, strokes)
 
-            if progress_callback:
-                progress_callback(frame_idx, total)
+                # Save raw mask
+                raw_path = os.path.join(masks_dir, f"raw_{frame_idx:05d}.png")
+                # Apply finesse and save finessed mask
+                finessed_path = os.path.join(masks_dir, f"{frame_idx:05d}.png")
+                finessed = apply_finesse(mask, finesse_dict, frame_idx, session_id)
+
+                # Submit to background threads so GPU doesn't block waiting for disk I/O
+                executor.submit(save_mask_files, raw_path, mask, finessed_path, finessed)
+
+                if progress_callback:
+                    progress_callback(frame_idx, total)
 
     predictor.reset_state(inference_state)
 

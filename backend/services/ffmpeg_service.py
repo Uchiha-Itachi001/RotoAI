@@ -3,12 +3,13 @@ import os
 import json
 
 
-def extract_frames(video_path: str, output_dir: str, start_frame: int = 0, end_frame: int = -1, target_fps: float = -1.0) -> int:
+def extract_frames(video_path: str, output_dir: str, start_frame: int = 0, end_frame: int = -1, target_fps: float = -1.0, progress_callback = None) -> int:
     """
     Extract a range of frames from video, optionally resampling to a target FPS.
     Returns total frame count extracted. Renames files sequentially (00001.jpg, 00002.jpg...).
     """
     import shutil
+    import time
     os.makedirs(output_dir, exist_ok=True)
 
     # Clean target folder first
@@ -47,7 +48,21 @@ def extract_frames(video_path: str, output_dir: str, start_frame: int = 0, end_f
         "-y"
     ])
 
-    subprocess.run(cmd, check=True, capture_output=True)
+    # Run popen to report progress concurrently
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    while p.poll() is None:
+        if progress_callback:
+            try:
+                count = len([f for f in os.listdir(output_dir) if f.endswith(".jpg")])
+                progress_callback(count)
+            except Exception:
+                pass
+        time.sleep(0.1)
+
+    stdout, stderr = p.communicate()
+    if p.returncode != 0:
+        raise subprocess.CalledProcessError(p.returncode, cmd, output=stdout, stderr=stderr)
 
     # Rename files to be sequential 00001, 00002...
     extracted_files = sorted([f for f in os.listdir(output_dir) if f.endswith(".jpg")])

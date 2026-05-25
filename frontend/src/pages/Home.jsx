@@ -53,6 +53,7 @@ export default function Home() {
   const [targetFps, setTargetFps] = useState(-1) // -1 means original
   const [rangeMode, setRangeMode] = useState('all') // all | custom
   const [uploading, setUploading] = useState(false)
+  const [extractProgress, setExtractProgress] = useState({ status: 'initializing', frame: 0, total: 100 })
   const [error, setError] = useState(null)
 
   const videoRef = useRef(null)
@@ -99,12 +100,29 @@ export default function Home() {
     if (!file) return
     setUploading(true)
     setError(null)
+    setExtractProgress({ status: 'initializing', frame: 0, total: 100 })
+
+    const sessionId = crypto.randomUUID()
+
+    // Start progress polling
+    const pollInterval = setInterval(async () => {
+      try {
+        const prog = await api.getUploadProgress(sessionId)
+        if (prog) {
+          setExtractProgress(prog)
+        }
+      } catch (e) {
+        // ignore polling errors temporarily
+      }
+    }, 400);
 
     try {
       const finalStartTime = rangeMode === 'custom' ? parseFloat(startTime) : 0.0
       const finalEndTime = rangeMode === 'custom' ? parseFloat(endTime) : -1.0
 
-      const data = await api.upload(file, finalStartTime, finalEndTime, targetFps)
+      const data = await api.upload(file, finalStartTime, finalEndTime, targetFps, sessionId)
+      clearInterval(pollInterval)
+
       setSession({
         id: data.session_id,
         firstFrameB64: data.first_frame_b64,
@@ -128,6 +146,7 @@ export default function Home() {
         }
       })
     } catch (err) {
+      clearInterval(pollInterval)
       setError(err.message || 'Upload failed. Is the backend running?')
     } finally {
       setUploading(false)
@@ -203,17 +222,43 @@ export default function Home() {
             <div className="card" style={{ background: 'rgba(17, 17, 24, 0.75)', backdropFilter: 'blur(20px)', border: '1px solid rgba(108, 99, 255, 0.12)', borderRadius: 16, padding: '24px' }}>
               
               {uploading ? (
-                // Uploading loading state
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 20 }}>
-                  <svg className="animate-spin" width="56" height="56" viewBox="0 0 56 56" fill="none">
-                    <circle cx="28" cy="28" r="24" stroke="rgba(255,255,255,0.05)" strokeWidth="3"/>
-                    <path d="M28 4 A24 24 0 0 1 52 28" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round"/>
-                  </svg>
-                  <div style={{ textAlign: 'center' }}>
-                    <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Initializing Magic Mask Session</h3>
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      Extracting video frames and preparing AI segmentation workspace...
+                // Uploading and frame extraction loading state
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 24, padding: 20 }}>
+                  <div style={{ position: 'relative', width: 64, height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg className="animate-spin" width="64" height="64" viewBox="0 0 64 64" fill="none">
+                      <circle cx="32" cy="32" r="28" stroke="rgba(255,255,255,0.05)" strokeWidth="3"/>
+                      <path d="M32 4 A28 28 0 0 1 60 32" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round"/>
+                    </svg>
+                    {extractProgress.status === 'extracting' && (
+                      <span style={{ position: 'absolute', fontSize: 11, fontWeight: 'bold', fontFamily: 'monospace', color: '#a78bfa' }}>
+                        {Math.round((extractProgress.frame / extractProgress.total) * 100)}%
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'center', width: '100%', maxWidth: 360 }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
+                      {extractProgress.status === 'extracting'
+                        ? 'Extracting & Loading Frames'
+                        : 'Uploading Video File...'}
+                    </h3>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                      {extractProgress.status === 'extracting'
+                        ? `Extracting frame ${extractProgress.frame} of ${extractProgress.total} from source...`
+                        : 'Preparing session workspace on your local machine...'}
                     </p>
+                    
+                    {/* Progress Bar Track */}
+                    <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.04)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #8b5cf6, #6c63ff)',
+                        borderRadius: 3,
+                        transition: 'width 0.2s ease-out',
+                        width: extractProgress.status === 'extracting'
+                          ? `${(extractProgress.frame / extractProgress.total) * 100}%`
+                          : '10%'
+                      }} />
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -235,32 +280,22 @@ export default function Home() {
                       />
                     </div>
 
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8, padding: '10px 12px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <div>
-                          <div style={{ fontSize: 10, color: '#6b6b8a' }}>File Name</div>
-                          <div style={{ fontSize: 12, color: '#f0f0ff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {file.name}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 10, color: '#6b6b8a' }}>Resolution</div>
-                          <div style={{ fontSize: 12, color: '#f0f0ff', fontWeight: 500 }}>
-                            {videoWidth} × {videoHeight}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 10, color: '#6b6b8a' }}>Duration</div>
-                          <div style={{ fontSize: 12, color: '#f0f0ff', fontWeight: 500 }}>
-                            {formatSeconds(duration)}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 10, color: '#6b6b8a' }}>File Size</div>
-                          <div style={{ fontSize: 12, color: '#f0f0ff', fontWeight: 500 }}>
-                            {(file.size / (1024 * 1024)).toFixed(1)} MB
-                          </div>
-                        </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8, padding: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: 6 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>File Name</span>
+                        <span style={{ color: '#f0f0ff', fontWeight: 500, maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.name}>{file.name}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: 6 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Resolution</span>
+                        <span style={{ color: '#f0f0ff', fontWeight: 500 }}>{videoWidth} × {videoHeight}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: 6 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Duration</span>
+                        <span style={{ color: '#f0f0ff', fontWeight: 500 }}>{formatSeconds(duration)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>File Size</span>
+                        <span style={{ color: '#f0f0ff', fontWeight: 500 }}>{(file.size / (1024 * 1024)).toFixed(1)} MB</span>
                       </div>
                     </div>
                   </div>
@@ -365,26 +400,26 @@ export default function Home() {
                     </div>
 
                     {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                      <button
-                        onClick={handleReset}
-                        style={{
-                          flex: 1, padding: '10px 0', borderRadius: 8, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.05)',
-                          background: 'rgba(255,255,255,0.02)', color: '#6b6b8a', fontSize: 12, fontWeight: 600, transition: 'all 0.15s'
-                        }}
-                        onMouseEnter={(e) => { e.target.style.background = 'rgba(255,255,255,0.05)'; e.target.style.color = '#fff' }}
-                        onMouseLeave={(e) => { e.target.style.background = 'rgba(255,255,255,0.02)'; e.target.style.color = '#6b6b8a' }}
-                      >
-                        Change Video
-                      </button>
-
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
                       <button
                         onClick={handleUpload}
                         className="btn btn-primary"
-                        style={{ flex: 2, padding: '10px 0', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                        style={{ width: '100%', padding: '12px 0', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                       >
                         Initialize Magic Mask Session
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                      </button>
+
+                      <button
+                        onClick={handleReset}
+                        style={{
+                          width: '100%', padding: '10px 0', borderRadius: 8, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(255,255,255,0.02)', color: '#8b8baf', fontSize: 12, fontWeight: 600, transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.target.style.background = 'rgba(255,255,255,0.06)'; e.target.style.color = '#fff' }}
+                        onMouseLeave={(e) => { e.target.style.background = 'rgba(255,255,255,0.02)'; e.target.style.color = '#8b8baf' }}
+                      >
+                        Change Video Source
                       </button>
                     </div>
 
