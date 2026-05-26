@@ -50,25 +50,41 @@ cd RotoAI
 
 ### 2. Backend setup
 
+Go to the `backend` folder, set up your virtual environment, install requirements, and configure environment variables:
+
 ```bash
 cd backend
 python -m venv venv
 
-# Windows
+# Activate virtual environment
+# Windows (CMD):
 venv\Scripts\activate
-# Linux/Mac
+# Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+# Linux/Mac:
 source venv/bin/activate
 
+# Install dependencies
 pip install -r requirements.txt
+
+# Create your backend .env file from the example
+# Windows (CMD/PowerShell):
+copy .env.example .env
+# Linux/Mac:
+cp .env.example .env
 ```
 
 ### 3. Install SAM 2 (from source)
+
+Make sure your virtual environment is still activated:
 
 ```bash
 pip install git+https://github.com/facebookresearch/sam2.git
 ```
 
 ### 4. Download SAM 2 checkpoint
+
+With your virtual environment still activated, download the weights into the `checkpoints` folder inside the `backend` directory:
 
 ```bash
 mkdir checkpoints
@@ -80,16 +96,16 @@ Invoke-WebRequest -Uri "https://dl.fbaipublicfiles.com/segment_anything_2/092824
 wget -P checkpoints https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_base_plus.pt
 ```
 
-Optionally download the Large model (higher accuracy, more VRAM):
+Optionally, download the Large model (higher accuracy, more VRAM):
 ```bash
-# Windows
+# Windows (PowerShell)
 Invoke-WebRequest -Uri "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt" -OutFile "checkpoints/sam2.1_hiera_large.pt"
 
 # Linux/Mac
 wget -P checkpoints https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
 ```
 
-If using Large model, update `backend/.env`:
+If using the Large model, update `backend/.env`:
 ```env
 SAM2_CHECKPOINT=./checkpoints/sam2.1_hiera_large.pt
 SAM2_MODEL_CFG=configs/sam2.1/sam2.1_hiera_l.yaml
@@ -97,29 +113,43 @@ SAM2_MODEL_CFG=configs/sam2.1/sam2.1_hiera_l.yaml
 
 ### 5. Frontend setup
 
+Open a new terminal session or navigate to the `frontend` folder and install dependencies and create the `.env` configuration:
+
 ```bash
 cd ../frontend
 npm install
+
+# Create your frontend .env file from the example
+# Windows (CMD/PowerShell):
+copy .env.example .env
+# Linux/Mac:
+cp .env.example .env
 ```
 
 ---
 
 ## ▶ Running (Development)
 
+To run the application locally in development mode:
+
 **Terminal 1 — Backend:**
 ```bash
 cd backend
-venv\Scripts\activate   # or: source venv/bin/activate
+# Activate virtual environment:
+# Windows (CMD): venv\Scripts\activate
+# Windows (PowerShell): .\venv\Scripts\Activate.ps1
+# Linux/Mac: source venv/bin/activate
+
 python main.py
-# API: http://localhost:8000
-# Gradio debug: http://localhost:8000/gradio
+# API runs at: http://localhost:8000
+# Gradio debug UI: http://localhost:8000/gradio
 ```
 
 **Terminal 2 — Frontend:**
 ```bash
 cd frontend
 npm run dev
-# App: http://localhost:5173
+# App runs at: http://localhost:5173
 ```
 
 ---
